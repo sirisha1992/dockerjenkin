@@ -1,71 +1,45 @@
-node {
-    def app
-
-    stage('Clone repository') {
-        /* Let's make sure we have the repository cloned to our workspace */
-
-        checkout scm
+pipeline {
+    agent any
+    
+    tools {
+        maven 'maven3'
     }
-	stage('compile'){
-	
-	sh '''
-	  mvn compile
-	'''
-	
-	
-	}
-	
-	stage('package'){
-	
-	sh '''
-	  mvn package
-	'''
-	
-	
-	}
-       stage('SonarCoverageResults'){
-	
-	sh '''
-	  mvn clean verify sonar:sonar -Dsonar.projectKey=srikanth -Dsonar.host.url=http://3.82.92.225:9001 -Dsonar.login=sqp_51a6dbf886c173f84ca532f2675ddc88d790ee81
-	'''
-	
-	
-	}
-	stage('SendingToNexus'){
-	
-	sh '''
-	  
-          curl -v -u admin:admin123 --upload-file /var/lib/jenkins/workspace/srikanth/target/*.war http://3.82.92.225:8081/nexus/content/repositories/srikanth
-	'''
-	
-	
-	}
-       stage('DockerBuild'){
-	
-	app = docker.build("devopsvmr/sri")
-	
-	
-	}
-       stage('DockerPush'){
-	
-	docker.withRegistry('https://registry.hub.docker.com', 'dockercred') {
-            app.push("${env.BUILD_NUMBER}")
-            app.push("latest")
-      
-             }
-	
-	
-	}
-   /*stage('ConnectingToEKS'){
-	
-	sh '''
-	  aws eks update-kubeconfig --region us-east-1 --name eksdemo
-	  kubectl get nodes
+    parameters {
+         string(name: 'tomcat_stag', defaultValue:'3.110.175.216', description: 'Node1-Remote Staging Server')
+         string(name: 'tomcat_prod', defaultValue: '13.232.80.6', description: 'Node2-Remote Production Server')
+    }
 
-	'''
-	
-	
-	
-	}*/
-   
-  }
+    triggers {
+         pollSCM('* * * * *')
+     }
+
+stages{
+        stage('Build'){
+            steps {
+                sh 'mvn clean package'
+            }
+            post {
+                success {
+                    echo 'Archiving the artifacts'
+                    archiveArtifacts artifacts: '*/target/.war'
+                }
+            }
+        }
+
+        stage ('Deployments'){
+            parallel{
+                stage ('Deploy to Staging'){
+                    steps {
+                        sh "scp */.war jenkins@${params.tomcat_stag}:/usr/share/tomcat/webapps/"
+                    }
+                }
+
+                stage ("Deploy to Production"){
+                    steps {
+                        sh "scp */.war jenkins@${params.tomcat_prod}:/usr/share/tomcat/webapps/"
+                    }
+                }
+            }
+        }
+    }
+}
